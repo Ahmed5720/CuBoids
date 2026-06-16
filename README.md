@@ -37,7 +37,13 @@ to resolve this, we perform a shuffling step after sorting, which sorts the posi
 
 This also yeilds about a 1.5x speedup over our last optimization.
 
-![Simulating 100,000 Boids](images/ss.png) 
+![Simulating 100,000 Boids](images/prettiest.png)
+
+## 10K Boids
+[![10K Boids](https://img.youtube.com/vi/rDzRSsSLcgs/0.jpg)](https://www.youtube.com/watch?v=rDzRSsSLcgs)
+
+## 100k particles (SPH fluid)
+[![100k particles (SPH fluid)](https://img.youtube.com/vi/wDjuHNOa1Ec/0.jpg)](https://www.youtube.com/watch?v=wDjuHNOa1Ec)
 
 ### build instructions
 * requires CMAKE and CUDA toolkit < 12.9
