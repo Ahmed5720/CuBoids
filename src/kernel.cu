@@ -53,6 +53,44 @@ void checkCUDAError(const char *msg, int line = -1) {
 /*! Size of the starting area in simulation space. */
 #define scene_scale 100.0f
 
+// settings for SPH 
+#define mass  1.0f
+#define restDensity  0.1f
+#define gasConst  250.0f
+#define viscosity  0.25f
+#define PIf   3.1415f
+#define tension 0.25f
+#define g -5.0f
+
+#define h    4.0f
+#define h2   ((h)*(h))
+#define h6   ((h2)*(h2)*(h2))
+#define h9   ((h6)*(h2)*(h))
+
+#define poly6     (315.0f / (64.0f * PIf * h9))
+#define spikyGrad (-45.0f / (PIf * h6))
+#define spikyLap (45.0f / (PIf * h6))
+#define selfDens (mass * poly6 * h6)
+#define massPoly6Product (mass * poly6)
+
+//static constexpr float mass = 1.0f;
+//static constexpr float restDensity = 1.0f;
+//static constexpr float gasConst = 1.0f;
+//static constexpr float viscosity = 1.0f;
+//static constexpr float h = 2.0f;
+//static constexpr float g = -9.8f;
+//static constexpr float tension = 0.0f;
+//static constexpr float Pi = 3.1415f;
+//
+//static constexpr float h2 = h * h;
+//static constexpr float h6 = h2 * h2 * h2;
+//static constexpr float h9 = h6 * h2 * h;
+//
+//static constexpr float poly6 = 315.0f / (64.0f * Pi * h9);
+//static constexpr float spikyGrad = -45.0f / (Pi * h6);
+//static constexpr float spikyLap = 45.0f / (Pi * h6);
+//static constexpr float selfDens = mass * poly6 * h6;
+//static constexpr float massPoly6Product = mass * poly6;
 
 // Kernel state (pointers are device pointers) 
 
@@ -60,8 +98,11 @@ void checkCUDAError(const char *msg, int line = -1) {
 int numObjects;
 dim3 threadsPerBlock(blockSize);
 
-// ping-pong buffers.
+float* dev_pressures;
+float* dev_densities;
+glm::vec3* dev_forces;
 glm::vec3 *dev_pos;
+// ping-pong buffers.
 glm::vec3 *dev_vel1;
 glm::vec3 *dev_vel2;
 glm::vec3 *dev_vel_coherent;
@@ -119,6 +160,22 @@ __global__ void kernGenerateRandomPosArray(int time, int N, glm::vec3 * arr, flo
   }
 }
 
+__global__ void kernInitLattice(int N, glm::vec3* pos, glm::vec3* vel,
+    int perSide, float spacing, glm::vec3 origin) {
+    int index = (blockIdx.x * blockDim.x) + threadIdx.x;
+    if (index >= N) return;
+
+    int i = index % perSide;
+    int j = (index / perSide) % perSide;
+    int k = index / (perSide * perSide);
+
+  
+    glm::vec3 jitter = 0.01f * spacing * generateRandomVec3(1.0f, index);
+
+    pos[index] = origin + glm::vec3(i, j, k) * spacing + jitter;
+    vel[index] = glm::vec3(0.0f);   // start at rest
+}
+
 /**
 * Initialize memory, update some globals
 */
@@ -148,17 +205,38 @@ void Boids::initSimulation(int N) {
   cudaMalloc((void**)&dev_particleGridIndices, N * sizeof(int));
   checkCUDAErrorWithLine("cudaMalloc particle grid indices failed!");
 
+  cudaMalloc((void**)&dev_pressures, N * sizeof(float));
+  checkCUDAErrorWithLine("cudaMalloc particle pressures failed!");
+
+  cudaMalloc((void**)&dev_densities, N * sizeof(float));
+  checkCUDAErrorWithLine("cudaMalloc particle densities failed!");
+
+  cudaMalloc((void**)&dev_forces, N * sizeof(glm::vec3));
+  checkCUDAErrorWithLine("cudaMalloc particle densities failed!");
 
   dev_thrust_particleArrayIndices = thrust::device_ptr<int>(dev_particleArrayIndices);
   dev_thrust_particleGridIndices = thrust::device_ptr<int>(dev_particleGridIndices);
 
 
-  kernGenerateRandomPosArray<<<fullBlocksPerGrid, blockSize>>>(1, numObjects,
+  /*kernGenerateRandomPosArray<<<fullBlocksPerGrid, blockSize>>>(1, numObjects,
     dev_pos, scene_scale);
-  checkCUDAErrorWithLine("kernGenerateRandomPosArray failed!");
+  checkCUDAErrorWithLine("kernGenerateRandomPosArray failed!");*/
+
+  float spacing = 0.5f * h;                       // ~h/2 -> ~30+ neighbors per particle
+  int   perSide = (int)ceilf(cbrtf((float)N));    // smallest cube that holds N
+  float blockWidth = (perSide - 1) * spacing;
+  glm::vec3 latticeOrigin(
+      -0.5f * blockWidth,        // centered in x
+      -scene_scale + 10.0f,      // sits ~10 units above the floor (gentle drop)
+      -0.5f * blockWidth);       // centered in z
+
+  kernInitLattice << <fullBlocksPerGrid, blockSize >> > (
+      numObjects, dev_pos, dev_vel1, perSide, spacing, latticeOrigin);
+  checkCUDAErrorWithLine("kernInitLattice failed!");
 
 
-  gridCellWidth = 1.0f * std::max(std::max(rule1Distance, rule2Distance), rule3Distance);
+  //gridCellWidth = 1.0f * std::max(std::max(rule1Distance, rule2Distance), rule3Distance);
+  gridCellWidth = h;
   int halfSideCount = (int)(scene_scale / gridCellWidth) + 1;
   gridSideCount = 2 * halfSideCount;
   gridCellCount = gridSideCount * gridSideCount * gridSideCount;
@@ -383,7 +461,7 @@ __global__ void kernIdentifyCellStartEnd(int N, int *particleGridIndices,
 
 }
 
-
+// must also shuffle densities and pressures for them to be coherent
 __global__ void kernShufflePosAndVel(int N, int* particleArrayIndices, glm::vec3* pos_coherent, glm::vec3* vel_coherent, glm::vec3* pos, glm::vec3* vel)
 {
     int idx = threadIdx.x + (blockIdx.x * blockDim.x);
@@ -392,6 +470,9 @@ __global__ void kernShufflePosAndVel(int N, int* particleArrayIndices, glm::vec3
     int sorted = particleArrayIndices[idx];
     pos_coherent[idx] = pos[sorted];
     vel_coherent[idx] = vel[sorted];
+    /*densities[idx] = densities[sorted];
+    forces[idx] = forces[sorted];
+    pressures[idx] = pressures[sorted]; */
 
 }
 __global__ void kernUpdateVelNeighborSearchScattered(
@@ -429,7 +510,7 @@ __global__ void kernUpdateVelNeighborSearchScattered(
         for (int dy = -1; dy <= 1; dy++)
             for (int dz = -1; dz <= 1; dz++)
             {   
-                // bounds check
+               //  bounds check
                 if (cellX + dx < 0 || cellX + dx >= gridResolution) continue;
                 if (cellY + dy < 0 || cellY + dy >= gridResolution) continue;
                 if (cellZ + dz < 0 || cellZ + dz >= gridResolution) continue;
@@ -478,6 +559,139 @@ __global__ void kernUpdateVelNeighborSearchScattered(
     
 }
 
+
+__global__ void kernUpdateDensitiesAndPressure(int N, int gridResolution, glm::vec3 gridMin,
+    float inverseCellWidth, float cellWidth,
+    int* gridCellStartIndices, int* gridCellEndIndices, int* particleArrayIndices,
+    float* pressures, float* densities, glm::vec3* pos_coherent)
+{
+    int idx = (blockIdx.x * blockDim.x) + threadIdx.x;
+    if (idx >= N)
+        return;
+
+    glm::vec3 xyz = ((pos_coherent[idx] - gridMin) * inverseCellWidth);
+    int cellX = (int)xyz.x;
+    int cellY = (int)xyz.y;
+    int cellZ = (int)xyz.z;
+    float density = selfDens; // initialize particle density with its self density
+
+    for (int dx = -1; dx <= 1; dx++)
+        for (int dy = -1; dy <= 1; dy++)
+            for (int dz = -1; dz <= 1; dz++)
+            {
+                // bounds check
+                if (cellX + dx < 0 || cellX + dx >= gridResolution) continue;
+                if (cellY + dy < 0 || cellY + dy >= gridResolution) continue;
+                if (cellZ + dz < 0 || cellZ + dz >= gridResolution) continue;
+
+                int gridIdx = gridIndex3Dto1D(cellX + dx, cellY + dy, cellZ + dz, gridResolution);
+                int start = gridCellStartIndices[gridIdx];
+                int end = gridCellEndIndices[gridIdx];
+
+                if (start == -1) // empty cell
+                    continue;
+
+
+                for (int i = start; i <= end; i++)
+                {
+                    // int neighbor = particleArrayIndices[i]; // no longer needed
+                    float dist2 = glm::dot(pos_coherent[i] - pos_coherent[idx], pos_coherent[i] - pos_coherent[idx]);
+                    if (i != idx && dist2 < h2)
+                    {
+                        density += massPoly6Product * __powf(h2 - dist2, 3.0f);
+                    }
+
+                }
+
+
+            }
+    densities[idx] = density;
+    pressures[idx] = gasConst * (density - restDensity);
+    
+}
+
+__global__ void kernUpdateForces(int N, int gridResolution, glm::vec3 gridMin,
+    float inverseCellWidth, float cellWidth,
+    int* gridCellStartIndices, int* gridCellEndIndices, int* particleArrayIndices,
+    const float* pressures, const float* densities,
+    glm::vec3* forces, glm::vec3* pos_coherent, glm::vec3* vel_coherent)
+{
+    int idx = (blockIdx.x * blockDim.x) + threadIdx.x;
+    if (idx >= N) return;
+
+    glm::vec3 xyz = (pos_coherent[idx] - gridMin) * inverseCellWidth;
+    int cellX = (int)xyz.x, cellY = (int)xyz.y, cellZ = (int)xyz.z;
+
+    glm::vec3 force(0.0f);
+
+    for (int dx = -1; dx <= 1; dx++)
+        for (int dy = -1; dy <= 1; dy++)
+            for (int dz = -1; dz <= 1; dz++) {
+                if (cellX + dx < 0 || cellX + dx >= gridResolution) continue;
+                if (cellY + dy < 0 || cellY + dy >= gridResolution) continue;
+                if (cellZ + dz < 0 || cellZ + dz >= gridResolution) continue;
+
+                int gridIdx = gridIndex3Dto1D(cellX + dx, cellY + dy, cellZ + dz, gridResolution);
+               // int gridIdx = gridIndex3Dto1D(cellX, cellY, cellZ, gridResolution);
+                int start = gridCellStartIndices[gridIdx];
+                int end = gridCellEndIndices[gridIdx];
+                if (start == -1) continue;
+
+                for (int i = start; i <= end; i++) {
+                    if (i == idx) continue;
+
+                    glm::vec3 rij = pos_coherent[i] - pos_coherent[idx];   
+                    float dist2 = glm::dot(rij, rij);
+                    if (dist2 >= h2 || dist2 < 1e-8f) continue;            
+
+                    float dist = sqrtf(dist2);
+                    glm::vec3 dir = rij / dist;
+                    float falloff = h - dist;
+
+                    // Pressure force (repulsive when pressures > 0).
+                    // dir is neighbor and spikyGrad < 0, so +dir pushes self away.
+                    float pcoeff = mass * (pressures[idx] + pressures[i])
+                        / (2.0f * densities[i])
+                        * spikyGrad * (falloff * falloff);
+                    force += dir * pcoeff;
+
+                    // Viscosity force: damps relative velocity (spikyLap > 0).
+                    glm::vec3 dv = vel_coherent[i] - vel_coherent[idx];
+                    force += viscosity * mass * (dv / densities[i]) * spikyLap * falloff;
+                }
+            }
+
+    forces[idx] = force;
+}
+
+__global__ void kernUpdateSPHPosition(int N, float dt,
+    int* particleArrayIndices,
+    glm::vec3* pos_coherent, glm::vec3* vel_coherent,
+    glm::vec3* forces, float* densities,
+    glm::vec3* pos_out, glm::vec3* vel_out)
+{
+    int idx = (blockIdx.x * blockDim.x) + threadIdx.x;
+    if (idx >= N) return;
+
+    glm::vec3 accel = forces[idx] / densities[idx] + glm::vec3(0.0f,0.0f, - g);
+    glm::vec3 vel = vel_coherent[idx] + accel * dt;
+    glm::vec3 pos = pos_coherent[idx] + vel * dt;
+
+    // simple box collision against the scene bounds
+    const float bound = scene_scale;
+    const float damp = -0.5f;
+    if (pos.x < -bound) { pos.x = -bound; vel.x *= damp; }
+    if (pos.x > bound) { pos.x = bound; vel.x *= damp; }
+    if (pos.y < -bound) { pos.y = -bound; vel.y *= damp; }
+    if (pos.y > bound) { pos.y = bound; vel.y *= damp; }
+    if (pos.z < -bound) { pos.z = -bound; vel.z *= damp; }
+    if (pos.z > bound) { pos.z = bound; vel.z *= damp; }
+
+    // scatter back to original (un-sorted) layout
+    int orig = particleArrayIndices[idx];
+    pos_out[orig] = pos;
+    vel_out[orig] = vel;
+}
 __global__ void kernUpdateVelNeighborSearchCoherent(
   int N, int gridResolution, glm::vec3 gridMin,
   float inverseCellWidth, float cellWidth,
@@ -566,6 +780,50 @@ void Boids::stepSimulationNaive(float dt) {
     cudaDeviceSynchronize();
 }
 
+void Boids::stepSPHSimulationCoherentGrid(float dt)
+{
+    dim3 blocksPerGrid((numObjects + blockSize - 1) / blockSize);
+    dim3 cellBlocks((gridCellCount + blockSize - 1) / blockSize);
+
+    kernResetIntBuffer << <cellBlocks, blockSize >> > (gridCellCount, dev_gridCellStartIndices, -1);
+    kernResetIntBuffer << <cellBlocks, blockSize >> > (gridCellCount, dev_gridCellEndIndices, -1);
+
+    kernComputeIndices << <blocksPerGrid, blockSize >> > (
+        numObjects, gridSideCount, gridMinimum, gridInverseCellWidth,
+        dev_pos, dev_particleArrayIndices, dev_particleGridIndices);
+
+    thrust::sort_by_key(dev_thrust_particleGridIndices,
+        dev_thrust_particleGridIndices + numObjects,
+        dev_thrust_particleArrayIndices);
+
+    kernShufflePosAndVel << <blocksPerGrid, blockSize >> > (
+        numObjects, dev_particleArrayIndices,
+        dev_pos_coherent, dev_vel_coherent, dev_pos, dev_vel1);
+
+    kernIdentifyCellStartEnd << <blocksPerGrid, blockSize >> > (
+        numObjects, dev_particleGridIndices,
+        dev_gridCellStartIndices, dev_gridCellEndIndices);
+
+    kernUpdateDensitiesAndPressure << <blocksPerGrid, blockSize >> > (
+        numObjects, gridSideCount, gridMinimum, gridInverseCellWidth, gridCellWidth,
+        dev_gridCellStartIndices, dev_gridCellEndIndices, dev_particleArrayIndices,
+        dev_pressures, dev_densities, dev_pos_coherent);
+
+    kernUpdateForces << <blocksPerGrid, blockSize >> > (
+        numObjects, gridSideCount, gridMinimum,
+        gridInverseCellWidth, gridCellWidth,
+        dev_gridCellStartIndices, dev_gridCellEndIndices, dev_particleArrayIndices,
+        dev_pressures, dev_densities, dev_forces,
+        dev_pos_coherent, dev_vel_coherent);
+
+    kernUpdateSPHPosition << <blocksPerGrid, blockSize >> > (
+        numObjects, dt, dev_particleArrayIndices,
+        dev_pos_coherent, dev_vel_coherent,
+        dev_forces, dev_densities,
+        dev_pos, dev_vel1);   
+
+    cudaDeviceSynchronize();
+}
 
 void Boids::stepSimulationScatteredGrid(float dt)
 {   
@@ -834,6 +1092,9 @@ void Boids::endSimulation() {
   cudaFree(dev_particleGridIndices);
   cudaFree(dev_pos_coherent);
   cudaFree(dev_vel_coherent);
+  cudaFree(dev_forces);
+  cudaFree(dev_densities);
+  cudaFree(dev_pressures);
 
 }
 
