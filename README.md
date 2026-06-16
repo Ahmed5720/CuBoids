@@ -1,6 +1,7 @@
 # CuBoids
-Simulating an unreasonable number of flocking boids on CUDA
+Simulating Boids and Fluids (fairly) efficiently on CUDA
 
+## 1. Boids
 This project is primarly based on University of Pennsylvania's CIS 5650 Boids flocking simulation Assignment
 
 Our goal is to simulate the behavior of flocking boids whos movement follows three simple rules:
@@ -17,6 +18,10 @@ For each boid b1
             check if distance (b1,b2) < the distance threshold for each rule
                 apply the rule and update b1's velocity accordingly
 ```
+
+### 2. Fluids
+Here, we use Smoothed Particle Hydrodynamics to model the fluid's motion
+
 
 performing this on a massively parallel GPU gives an "okay" performance, but certainly does not make full use of it
 The optimized procedure assumes a fixed grid size
