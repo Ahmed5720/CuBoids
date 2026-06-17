@@ -26,6 +26,12 @@ GLuint boidVBO_velocities = 0;
 GLuint boidIBO = 0;
 GLuint displayImage;
 GLuint program[2];
+// to visualize mesh
+GLuint meshVAO = 0, meshVBO = 0, meshIBO = 0, meshProgram = 0;
+GLsizei meshIndexCount = 0;
+GLint meshProjLoc = -1;
+GLuint meshTex = 0;
+GLuint meshNormalVBO;
 
 const unsigned int PROG_BOID = 0;
 
@@ -49,6 +55,20 @@ glm::vec3 lookAt = glm::vec3(0.0f, 0.0f, 0.0f);
 glm::vec3 cameraPosition;
 
 glm::mat4 projection;
+
+std::vector<glm::vec3> originalVerts;
+std::vector<glm::vec3> meshVerts;
+std::vector<glm::vec3> meshNormals;
+std::vector<unsigned int> mtris;
+
+// Mesh transform
+glm::vec3 meshPosition(0.0f, 0.0f, 70.0f);
+glm::vec3 meshRotation(90.0f, 180.0f, 0.0f);
+float meshScale = 80.0f;
+
+
+
+static bool ui_hide = false;
 
 //====================================
 // Main
@@ -74,4 +94,21 @@ void runCUDA();
 //====================================
 bool init(int argc, char **argv);
 void initVAO();
+void initMesh(const std::vector<glm::vec3>& verts, const std::vector<glm::vec3>& normals,
+    const std::vector<glm::vec2>& uvs,
+    const std::vector<unsigned int>& indices,
+    const std::vector<unsigned char>& texPixels, int texW, int texH, int texCh);
 void initShaders(GLuint *program);
+std::vector<glm::vec3> sampleMeshSurface(const std::vector<glm::vec3>& verts, std::vector<unsigned int>& indices, float spacing, int layers);
+void placeMesh(std::vector<glm::vec3>& verts,
+    float targetSize,
+    glm::vec3 eulerDeg,    // rotation in degrees, applied X then Y then Z
+    glm::vec3 position);
+bool loadGltf(const char* path,
+    std::vector<glm::vec3>& verts, std::vector<glm::vec3>& normals,
+    std::vector<glm::vec2>& uvs,
+    std::vector<unsigned int>& indices,
+    std::vector<unsigned char>& texPixels, int& texW, int& texH, int& texCh);
+void updateMeshTransform();
+void  uploadMeshVertices();
+void restartSimulation();
