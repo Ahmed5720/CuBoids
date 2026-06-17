@@ -50,7 +50,7 @@ This also yeilds about a 1.5x speedup over our last optimization.
 [![10K Boids](https://img.youtube.com/vi/rDzRSsSLcgs/0.jpg)](https://www.youtube.com/watch?v=rDzRSsSLcgs)
 
 ## 100k particles (SPH fluid) and a duck
-[![100k particles (SPH fluid)](https://youtu.be/W0XgQxDH7y0/0.jpg)](https://youtu.be/W0XgQxDH7y0)
+[![100k particles (SPH fluid)](https://youtu.be/W0XgQxDH7y0/vi/0.jpg)](https://youtu.be/W0XgQxDH7y0)
 
 ### build instructions
 * requires CMAKE and CUDA toolkit < 12.9
