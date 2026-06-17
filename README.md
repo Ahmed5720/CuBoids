@@ -1,4 +1,6 @@
 # CuBoids
+
+![ducky](images/ducky.png)
 Simulating Boids and Fluids (fairly) efficiently on CUDA
 
 ## 1. Boids
