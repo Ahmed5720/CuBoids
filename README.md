@@ -4,7 +4,7 @@
 Simulating Boids and Fluids (fairly) efficiently on CUDA
 
 ## 1. Boids
-This project is primarly based on University of Pennsylvania's CIS 5650 Boids flocking simulation Assignment
+
 
 Our goal is to simulate the behavior of flocking boids whos movement follows three simple rules:
 1. Rule 1: (Cohesion) Boids try to fly towards the centre of mass of neighbouring boids.
@@ -21,9 +21,45 @@ For each boid b1
                 apply the rule and update b1's velocity accordingly
 ```
 
-## 2. Fluids
-Here, we use Smoothed Particle Hydrodynamics to model the fluid's motion
+## 2. Fluids (SPH)
+For fluid simulation, we use Smoothed Particle Hydrodynamics (SPH) - a Lagrangian method that discretizes fluid into particles, where each particle represents a small volume of fluid. In a nutshell, we update the particles based on the assumption that fluid properties (density, pressure) at any point are computed by smoothing contributions from neighboring particles using a weighted kernel function.
 
+This is done using the following three kernels in order
+
+Kernel 1: Density and Pressure
+```
+For each particle:
+    density = selfDensity
+    For each neighbor within 27 surrounding cells:
+        if distance² < h²:
+            density += mass * (h² - distance²)³
+    pressure = gasConst * (density - restDensity)
+```
+
+Kernel 2: Forces
+```
+For each particle:
+    force = 0
+    For each neighbor within 27 surrounding cells:
+        if distance² < h²:
+            // Pressure: repels from high density areas
+            force += direction * pressureForce
+            
+            // Viscosity: damps relative velocity
+            force += viscosity * velocityDifference
+    forces[idx] = force
+```
+
+Kernel 3: integration
+```
+For each particle:
+    acceleration = forces / density + gravity
+    velocity += acceleration * dt
+    position += velocity * dt
+    
+    // Scatter back to original particle order for rendering
+    positions_original[origIdx] = position
+```
 
 performing this on a massively parallel GPU gives an "okay" performance, but certainly does not make full use of it
 The optimized procedure assumes a fixed grid size
