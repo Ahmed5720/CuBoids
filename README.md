@@ -21,7 +21,7 @@ For each boid b1
                 apply the rule and update b1's velocity accordingly
 ```
 
-### 2. Fluids
+## 2. Fluids
 Here, we use Smoothed Particle Hydrodynamics to model the fluid's motion
 
 
@@ -43,6 +43,13 @@ More importantly, these accesses are scattered across each buffer so we cannot m
 to resolve this, we perform a shuffling step after sorting, which sorts the position and velocity buffers based on the already sorted index buffer. 
 
 This also yeilds about a 1.5x speedup over our last optimization.
+
+## 3. Ducky (Mesh Collision)
+One way to handle mesh collisions would be to explicitly send the mesh to the kernel that performs position updates and test the mesh's triangles against every particle. Ofcourse that would be very expensive, we could make use of our spatial partitioning scheme to also sort the mesh's triangles into corrosponding cells, and only checking for each particle against the triangles in the same cell. 
+But there's a cleaner approach. 
+Instead of doing an explicit mesh vs particle collision test before we set the particles' final positios, we build a set of boundary particles around the mesh by sampling on its surface. Then we simply extend our particle buffer by these "Fake" boundary particles. These boundary particles can then go through the exact same pipeline as every other particle with the exception that their position/velocities do not get updated with the other particles. Also these particles are not sent to the VBO so they are not rendered. Effectively, we now have a forcefield sorrounding our mesh that repels particles away naturally according to the SPH update rule. For Boids, we modify rule 2 slightly but still retain the same code.
+
+![Ducky covered in boundary particles](images/DuckForceField.png)
 
 ![Simulating 100,000 Boids](images/prettiest.png)
 
