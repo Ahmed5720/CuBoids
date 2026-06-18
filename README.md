@@ -51,13 +51,14 @@ Instead of doing an explicit mesh vs particle collision test before we set the p
 
 ![Ducky covered in boundary particles](images/DuckForceField.png)
 
-![Simulating 100,000 Boids](images/prettiest.png)
+## 100k particles (SPH fluid) and a duck
+[![100k particles (SPH fluid)](https://img.youtube.com/vi/W0XgQxDH7y0/0.jpg)](https://youtu.be/W0XgQxDH7y0)
+
+![Simulating 100,000 Boids](images/boidducky.png)
 
 ## 10K Boids
 [![10K Boids](https://img.youtube.com/vi/rDzRSsSLcgs/0.jpg)](https://www.youtube.com/watch?v=rDzRSsSLcgs)
 
-## 100k particles (SPH fluid) and a duck
-[![100k particles (SPH fluid)](https://img.youtube.com/vi/W0XgQxDH7y0/0.jpg)](https://youtu.be/W0XgQxDH7y0)
 
 ### build instructions
 * requires CMAKE and CUDA toolkit < 12.9
